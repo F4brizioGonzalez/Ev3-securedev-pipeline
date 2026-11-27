@@ -50,8 +50,40 @@ pipeline {
         }
 
         // >>> [SEGURIDAD]: aquí van las etapas "Security Review (SAST)" y "Dependency Management"
+        stage('Analyze (SAST)') {
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                    sh '''
+                    mkdir -p reports
+                    bandit -r . -f txt -o reports/bandit_report.txt || true
+                    cat reports/bandit_report.txt
+                    '''
+                }
+            }
+        }
 
         // >>> [ZAP]: aquí van las etapas "Deploy Staging" y "DAST - OWASP ZAP"
+        stage('Deploy') {
+            steps {
+                sh 'docker rm -f securedev-app || true'
+                sh 'docker build -t securedev-app:1.0.${BUILD_NUMBER} .'
+                sh 'docker run -d --name securedev-app --network host securedev-app:1.0.${BUILD_NUMBER}'
+            }
+        }
+        
+        stage('Security Scan (OWASP ZAP)') {
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                    sh '''
+                    mkdir -p reports
+                    chmod 777 reports
+                    docker run --rm --network host -v $(pwd)/reports:/zap/wrk/:rw \
+                      ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                      -t http://localhost:5000 -r zap_report.html -I
+                    '''
+                }
+            }
+        }
 
         stage('Deploy Producción') {
             // >>> [GATE]: aquí va la condición "when" que protege producción
