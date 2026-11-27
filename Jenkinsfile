@@ -70,8 +70,13 @@ pipeline {
                     mkdir -p reports
                     .venv/bin/pip install --quiet pip-audit
                     echo "== Ejecutando pip-audit (SCA) =="
-                    .venv/bin/pip-audit -r requirements.txt -o reports/pip-audit.txt
+                    rc=0
+                    .venv/bin/pip-audit -r requirements.txt -o reports/pip-audit.txt || rc=$?
+                    if [ ! -f reports/pip-audit.txt ]; then
+                        echo "Sin vulnerabilidades conocidas en requirements.txt" > reports/pip-audit.txt
+                    fi
                     cat reports/pip-audit.txt
+                    exit $rc
                     '''
                 }
             }
