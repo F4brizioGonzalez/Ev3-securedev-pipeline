@@ -91,7 +91,7 @@ pipeline {
                     set -eu
                     mkdir -p reports
                     echo "== Ejecutando escaneo con OWASP ZAP =="
-                    curl -fS "http://zap:8090/JSON/spider/action/scan/?url=http://jenkins:5001"
+                    curl -fS "http://zap:8080/JSON/spider/action/scan/?url=http://jenkins:5001"
                     echo ""
                     sleep 15
                     curl -fS "http://zap:8080/OTHER/core/other/htmlreport/" -o reports/zap_report.html
