@@ -12,14 +12,18 @@ import sqlite3
 import time
 
 from flask import Flask, Response, g, jsonify, render_template_string, request
+from markupsafe import escape
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 app = Flask(__name__)
 
-## Clave de la aplicación y credenciales del administrador.
-SECRET_KEY = "SecureDev-2024-clave-super-secreta"
-ADMIN_USUARIO = "admin"
-ADMIN_CLAVE_MD5 = "21232f297a57a5a743894a0e4a801fc3"
+## Clave de la aplicación (se lee de entorno o se genera una aleatoria si no está definida).
+SECRET_KEY = os.environ.get("SECRET_KEY", os.urandom(32).hex())
+ADMIN_USUARIO = os.environ.get("ADMIN_USUARIO", "admin")
+ADMIN_CLAVE_SHA256 = os.environ.get(
+    "ADMIN_CLAVE_SHA256",
+    hashlib.sha256(os.environ.get("ADMIN_PASSWORD", "admin").encode("utf-8")).hexdigest(),
+)
 app.config["SECRET_KEY"] = SECRET_KEY
 
 ## Versión desplegada: la inyecta el pipeline (1.0.<build>+<commit>). Sirve para la trazabilidad.
@@ -124,10 +128,13 @@ def antes_de_la_peticion():
 @app.after_request
 def despues_de_la_peticion(respuesta):
     """!
-    @brief Registra la métrica de cada petición atendida.
+    @brief Registra la métrica de cada petición y agrega cabeceras de seguridad HTTP.
     @param respuesta Respuesta que Flask enviará al cliente.
-    @return La misma respuesta.
+    @return La misma respuesta con cabeceras defensivas.
     """
+    respuesta.headers["X-Content-Type-Options"] = "nosniff"
+    respuesta.headers["X-Frame-Options"] = "DENY"
+    respuesta.headers["Content-Security-Policy"] = "default-src 'self'"
     endpoint = request.url_rule.rule if request.url_rule else "desconocido"
     if endpoint != "/metrics":
         HTTP_PETICIONES.labels(request.method, endpoint, str(respuesta.status_code)).inc()
@@ -147,10 +154,10 @@ def portada():
 @app.route("/hello")
 def hello():
     """!
-    @brief Saluda al usuario cuyo nombre llega en el parámetro de URL «name».
-    @return Página HTML con el saludo.
+    @brief Saluda al usuario cuyo nombre llega en el parámetro de URL «name», escapando HTML.
+    @return Página HTML con el saludo seguro.
     """
-    name = request.args.get("name", "visitante")
+    name = escape(request.args.get("name", "visitante"))
     return f"<h1>Hola, {name}!</h1>"
 
 
@@ -198,15 +205,17 @@ def obtener_alumno(alumno_id):
 @app.route("/alumnos/buscar")
 def buscar_alumnos():
     """!
-    @brief Busca alumnos cuyo nombre contenga el texto del parámetro «nombre».
+    @brief Busca alumnos cuyo nombre contenga el texto del parámetro «nombre» de forma segura.
     @return JSON con los alumnos encontrados.
     """
-    nombre = request.args.get("nombre", "")
-    consulta = f"SELECT * FROM alumnos WHERE nombre LIKE '%{nombre}%'"
+    nombre = request.args.get("nombre", "").strip()
+    if len(nombre) > 100:
+        return jsonify({"error": "Parámetro de búsqueda demasiado largo"}), 400
+    consulta = "SELECT * FROM alumnos WHERE nombre LIKE ?"
     try:
-        filas = conectar().execute(consulta).fetchall()
-    except sqlite3.Error as error:
-        return jsonify({"error": str(error), "consulta": consulta}), 500
+        filas = conectar().execute(consulta, (f"%{nombre}%",)).fetchall()
+    except sqlite3.Error:
+        return jsonify({"error": "Error al consultar la base de datos"}), 500
     return jsonify([dict(f) for f in filas])
 
 
@@ -216,9 +225,10 @@ def login():
     @brief Valida las credenciales del administrador enviadas por formulario.
     @return JSON con el resultado; 401 si las credenciales no son válidas.
     """
-    usuario = request.form.get("usuario", "")
+    usuario = request.form.get("usuario", "").strip()
     clave = request.form.get("clave", "")
-    if usuario == ADMIN_USUARIO and hashlib.md5(clave.encode()).hexdigest() == ADMIN_CLAVE_MD5:
+    clave_hash = hashlib.sha256(clave.encode("utf-8")).hexdigest()
+    if usuario == ADMIN_USUARIO and clave_hash == ADMIN_CLAVE_SHA256:
         LOGIN_EXITOSOS.inc()
         return jsonify({"mensaje": "Bienvenido, administrador"})
     LOGIN_FALLIDOS.inc()
@@ -238,4 +248,4 @@ def metrics():
 iniciar_db()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")
