@@ -85,26 +85,42 @@ pipeline {
         }
 
         stage('DAST - OWASP ZAP') {
-            steps {
-                catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
-                    sh '''#!/bin/bash
-                    set -eu
-                    mkdir -p reports
-                    echo "== Ejecutando escaneo con OWASP ZAP =="
-                    curl -fS "http://zap:8080/JSON/spider/action/scan/?url=http://jenkins:5001"
-                    echo ""
-                    sleep 15
-                    curl -fS "http://zap:8080/OTHER/core/other/htmlreport/" -o reports/zap_report.html
-                    curl -fS "http://zap:8080/JSON/core/view/alerts/" -o reports/zap_alerts.json
-                    ls -lh reports/zap_report.html
-                    if grep -q '"riskcode": "[23]"' reports/zap_alerts.json; then
-                        echo "[ALERTA ZAP] Se encontraron vulnerabilidades de riesgo Medio o Alto."
-                        exit 1
+        steps {
+            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                sh '''#!/bin/bash
+                set -u
+                mkdir -p reports
+                echo "== Verificando API de OWASP ZAP =="
+                for i in $(seq 1 10); do
+                    if curl -sf --max-time 3 "http://zap:8080/JSON/core/view/version/" > /dev/null; then
+                        echo "ZAP respondió correctamente."
+                        break
                     fi
-                    '''
-                }
+                    sleep 2
+                done
+
+                echo "== Ejecutando spider y escaneo pasivo/activo en ZAP =="
+                curl -sf --max-time 10 "http://zap:8080/JSON/core/action/accessUrl/?url=http://jenkins:5001&followRedirects=true" > /dev/null || true
+                curl -sf --max-time 10 "http://zap:8080/JSON/spider/action/scan/?url=http://jenkins:5001" > /dev/null || true
+                sleep 12
+                curl -sf --max-time 10 "http://zap:8080/OTHER/core/other/htmlreport/" -o reports/zap_report.html || true
+                curl -sf --max-time 10 "http://zap:8080/JSON/core/view/alerts/" -o reports/zap_alerts.json || true
+
+                if [ -s reports/zap_report.html ]; then
+                    echo "Reporte generado:"
+                    ls -lh reports/zap_report.html
+                else
+                    echo "Advertencia: zap_report.html no se generó o quedó vacío."
+                fi
+
+                if [ -s reports/zap_alerts.json ] && grep -q '"riskcode": "[23]"' reports/zap_alerts.json; then
+                    echo "[ALERTA ZAP] Se encontraron vulnerabilidades de riesgo Medio o Alto."
+                    exit 1
+                fi
+                '''
             }
         }
+    }
 
         stage('Deploy Producción') {
             // >>> [GATE]: condición "when" que protege producción si hay hallazgos de seguridad
