@@ -219,6 +219,8 @@ def buscar_alumnos():
     return jsonify([dict(f) for f in filas])
 
 
+
+
 @app.route("/login", methods=["POST"])
 def login():
     """!
