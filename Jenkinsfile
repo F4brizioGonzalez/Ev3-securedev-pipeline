@@ -88,14 +88,15 @@ pipeline {
             steps {
                 catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
                     sh '''#!/bin/bash
-                    set -u
+                    set -eu
                     mkdir -p reports
                     echo "== Ejecutando escaneo con OWASP ZAP =="
-                    curl -s "http://zap:8090/JSON/spider/action/scan/?url=http://jenkins:5001" > /dev/null
-                    sleep 10
-                    curl -s "http://zap:8090/OTHER/core/other/htmlreport/" -o reports/zap_report.html
-                    curl -s "http://zap:8090/JSON/core/view/alerts/" -o reports/zap_alerts.json
-                    cat reports/zap_report.html > /dev/null
+                    curl -fS "http://zap:8090/JSON/spider/action/scan/?url=http://jenkins:5001"
+                    echo ""
+                    sleep 15
+                    curl -fS "http://zap:8090/OTHER/core/other/htmlreport/" -o reports/zap_report.html
+                    curl -fS "http://zap:8090/JSON/core/view/alerts/" -o reports/zap_alerts.json
+                    ls -lh reports/zap_report.html
                     if grep -q '"riskcode": "[23]"' reports/zap_alerts.json; then
                         echo "[ALERTA ZAP] Se encontraron vulnerabilidades de riesgo Medio o Alto."
                         exit 1
